@@ -12,7 +12,7 @@ import {
 import { Magnetometer } from 'expo-sensors';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import Svg, { Polyline } from 'react-native-svg';
+import Svg, { G, Line, Polyline, Text as SvgText } from 'react-native-svg';
 
 const UPDATE_INTERVAL_MS = 100;
 const MAX_SAMPLES = 240;
@@ -26,19 +26,29 @@ function magnitude(v) {
   return Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
-function toPoints(data, width, height) {
+function getGridValues(minValue, maxValue, step) {
+  const values = [];
+  const start = Math.ceil(minValue / step) * step;
+
+  for (let v = start; v <= maxValue; v += step) {
+    values.push(v);
+  }
+
+  return values;
+}
+
+function toPoints(data, width, height, minValue, maxValue) {
   if (data.length < 2) {
     return `0,${height / 2} ${width},${height / 2}`;
   }
 
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const range = Math.max(0.001, max - min);
+  const range = Math.max(0.001, maxValue - minValue);
 
   return data
     .map((value, index) => {
       const x = (index / (data.length - 1)) * width;
-      const normalized = (value - min) / range;
+      const clamped = Math.max(minValue, Math.min(maxValue, value));
+      const normalized = (clamped - minValue) / range;
       const y = height - normalized * height;
       return `${x},${y}`;
     })
@@ -50,6 +60,8 @@ export default function App() {
   const [offset, setOffset] = useState({ x: 0, y: 0, z: 0 });
   const [samples, setSamples] = useState([]);
   const [isCalibrating, setIsCalibrating] = useState(false);
+  const [showChart, setShowChart] = useState(true);
+  const [autoScale, setAutoScale] = useState(true);
 
   useEffect(() => {
     Magnetometer.setUpdateInterval(UPDATE_INTERVAL_MS);
@@ -83,6 +95,48 @@ export default function App() {
   }, [corrected, totalB]);
 
   const chartData = useMemo(() => samples.map((s) => s.m), [samples]);
+
+const chartMin = useMemo(() => {
+  if (chartData.length === 0) {
+    return 0;
+  }
+
+  if (autoScale) {
+    const min = Math.min(...chartData);
+    const max = Math.max(...chartData);
+    if (Math.abs(max - min) < 1) {
+      return Math.max(0, min - 5);
+    }
+    return Math.max(0, Math.floor(min / 10) * 10);
+  }
+
+  return 0;
+}, [chartData, autoScale]);
+
+const chartMax = useMemo(() => {
+  if (chartData.length === 0) {
+    return 100;
+  }
+
+  if (autoScale) {
+    const min = Math.min(...chartData);
+    const max = Math.max(...chartData);
+    if (Math.abs(max - min) < 1) {
+      return max + 5;
+    }
+    return Math.ceil(max / 10) * 10;
+  }
+
+  return 100;
+}, [chartData, autoScale]);
+
+const gridValues = useMemo(() => {
+  return getGridValues(chartMin, chartMax, 10);
+}, [chartMin, chartMax]);
+
+const chartPoints = useMemo(() => {
+  return toPoints(chartData, 320, 180, chartMin, chartMax);
+}, [chartData, chartMin, chartMax]);
 
   const setCurrentAsZero = () => {
     setOffset(raw);
@@ -186,18 +240,80 @@ export default function App() {
         </View>
 
         <View style={styles.card}>
+        <View style={styles.chartHeaderRow}>
           <Text style={styles.cardTitle}>Mágneses indukció grafikon</Text>
-          <Svg width="100%" height={180} viewBox="0 0 320 180">
-            <Polyline
-              points={toPoints(chartData, 320, 180)}
-              fill="none"
-              stroke="#1b6ca8"
-              strokeWidth={3}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          </Svg>
+
+          <Pressable
+            style={[styles.smallButton, !showChart && styles.smallButtonInactive]}
+            onPress={() => setShowChart((prev) => !prev)}
+          >
+            <Text style={styles.smallButtonText}>
+              {showChart ? 'Grafikon elrejtése' : 'Grafikon mutatása'}
+            </Text>
+          </Pressable>
         </View>
+
+        {showChart && (
+          <>
+            <View style={styles.chartControlsRow}>
+              <Pressable
+                style={[styles.smallButton, autoScale && styles.smallButtonActive]}
+                onPress={() => setAutoScale(true)}
+              >
+                <Text style={styles.smallButtonText}>Auto scale</Text>
+              </Pressable>
+
+              <Pressable
+                style={[styles.smallButton, !autoScale && styles.smallButtonActive]}
+                onPress={() => setAutoScale(false)}
+              >
+                <Text style={styles.smallButtonText}>Fix scale</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.chartInfo}>
+              Skála: {format(chartMin)} - {format(chartMax)} uT
+            </Text>
+
+            <Svg width="100%" height={180} viewBox="0 0 320 180">
+              {gridValues.map((value) => {
+                const y =
+                  180 - ((value - chartMin) / Math.max(0.001, chartMax - chartMin)) * 180;
+
+                return (
+                  <G key={value}>
+                    <Line
+                      x1="0"
+                      y1={y}
+                      x2="320"
+                      y2={y}
+                      stroke="#c7d6e2"
+                      strokeWidth="1"
+                    />
+                    <SvgText
+                      x="4"
+                      y={Math.max(12, y - 2)}
+                      fontSize="9"
+                      fill="#5a768c"
+                    >
+                      {value} uT
+                    </SvgText>
+                  </G>
+                );
+              })}
+
+              <Polyline
+                points={chartPoints}
+                fill="none"
+                stroke="#1b6ca8"
+                strokeWidth={3}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </Svg>
+          </>
+        )}
+      </View>
 
         <View style={styles.buttonRow}>
           <Pressable style={styles.button} onPress={setCurrentAsZero}>
@@ -288,5 +404,40 @@ const styles = StyleSheet.create({
   info: {
     color: '#45667d',
     fontSize: 13,
+  },
+
+    chartHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chartControlsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  smallButton: {
+    backgroundColor: '#7a97b0',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  smallButtonActive: {
+    backgroundColor: '#1b6ca8',
+  },
+  smallButtonInactive: {
+    backgroundColor: '#7a97b0',
+  },
+  smallButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  chartInfo: {
+    color: '#45667d',
+    fontSize: 12,
+    marginBottom: 8,
   },
 });
