@@ -62,6 +62,9 @@ export default function App() {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [showChart, setShowChart] = useState(true);
   const [autoScale, setAutoScale] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingStartedAt, setRecordingStartedAt] = useState(null);
+  const [recordingStoppedAt, setRecordingStoppedAt] = useState(null);
 
   useEffect(() => {
     Magnetometer.setUpdateInterval(UPDATE_INTERVAL_MS);
@@ -85,6 +88,10 @@ export default function App() {
   const totalB = useMemo(() => magnitude(corrected), [corrected]);
 
   useEffect(() => {
+    if (!isRecording) {
+      return;
+    }
+
     const point = {
       ...corrected,
       m: totalB,
@@ -92,7 +99,7 @@ export default function App() {
     };
 
     setSamples((prev) => [...prev.slice(-(MAX_SAMPLES - 1)), point]);
-  }, [corrected, totalB]);
+  }, [corrected, totalB, isRecording]);
 
   const chartData = useMemo(() => samples.map((s) => s.m), [samples]);
 
@@ -138,9 +145,17 @@ const chartPoints = useMemo(() => {
   return toPoints(chartData, 320, 180, chartMin, chartMax);
 }, [chartData, chartMin, chartMax]);
 
-  const setCurrentAsZero = () => {
-    setOffset(raw);
-  };
+const startRecording = () => {
+  setSamples([]);
+  setRecordingStartedAt(Date.now());
+  setRecordingStoppedAt(null);
+  setIsRecording(true);
+};
+
+const stopRecording = () => {
+  setIsRecording(false);
+  setRecordingStoppedAt(Date.now());
+};
 
   const startCalibration = async () => {
     if (isCalibrating) {
@@ -183,20 +198,36 @@ const chartPoints = useMemo(() => {
     Alert.alert('Kalibráció befejezve', 'Mozgassa a telefont egy 8-as alakzatban a legjobb eredményért.');
   };
 
+  
   const exportCsv = async () => {
     if (samples.length === 0) {
-      Alert.alert('Nincs adat', 'Nincs exportálható adat.');
+      Alert.alert('Nincs adat', 'Előbb készíts egy mérést.');
+      return;
+    }
 
+    if (isRecording) {
+      Alert.alert('Mérés folyamatban', 'Exportálás előtt állítsd le a mérést.');
       return;
     }
 
     try {
+      const metadata = [
+        `recording_started_ms,${recordingStartedAt ?? ''}`,
+        `recording_stopped_ms,${recordingStoppedAt ?? ''}`,
+        `sample_interval_ms,${UPDATE_INTERVAL_MS}`,
+        `sample_count,${samples.length}`,
+        `offset_x_uT,${offset.x.toFixed(4)}`,
+        `offset_y_uT,${offset.y.toFixed(4)}`,
+        `offset_z_uT,${offset.z.toFixed(4)}`,
+        '',
+      ];
+
       const header = 'timestamp_ms,x_uT,y_uT,z_uT,magnitude_uT';
       const rows = samples.map(
         (s) =>
           `${s.t},${s.x.toFixed(4)},${s.y.toFixed(4)},${s.z.toFixed(4)},${s.m.toFixed(4)}`
       );
-      const csv = [header, ...rows].join('\n');
+      const csv = [...metadata, header, ...rows].join('\n');
 
       const file = new File(Paths.cache, `magnetometer_${Date.now()}.csv`);
       file.create({ overwrite: true });
@@ -241,7 +272,7 @@ const chartPoints = useMemo(() => {
 
         <View style={styles.card}>
         <View style={styles.chartHeaderRow}>
-          <Text style={styles.cardTitle}>Mágneses indukció grafikon</Text>
+          <Text style={styles.cardTitle}>Aktuális mérési görbe</Text>
 
           <Pressable
             style={[styles.smallButton, !showChart && styles.smallButtonInactive]}
@@ -316,20 +347,49 @@ const chartPoints = useMemo(() => {
       </View>
 
         <View style={styles.buttonRow}>
-          <Pressable style={styles.button} onPress={setCurrentAsZero}>
-            <Text style={styles.buttonText}>Nullázás</Text>
-          </Pressable>
+          {!isRecording ? (
+            <Pressable style={[styles.button, styles.recordButton]} onPress={startRecording}>
+              <Text style={styles.buttonText}>Mérés indítása</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={[styles.button, styles.stopButton]} onPress={stopRecording}>
+              <Text style={styles.buttonText}>Mérés leállítása</Text>
+            </Pressable>
+          )}
 
-          <Pressable style={[styles.button, isCalibrating && styles.buttonDisabled]} onPress={startCalibration} disabled={isCalibrating}>
-            <Text style={styles.buttonText}>{isCalibrating ? 'Kalibrálás...' : '8s kalibráció'}</Text>
+          <Pressable
+            style={[styles.button, isCalibrating && styles.buttonDisabled]}
+            onPress={startCalibration}
+            disabled={isCalibrating || isRecording}
+          >
+            <Text style={styles.buttonText}>
+              {isCalibrating ? 'Kalibrálás...' : '8s kalibráció'}
+            </Text>
           </Pressable>
         </View>
 
-        <Pressable style={[styles.button, styles.exportButton]} onPress={exportCsv}>
+        <Pressable
+          style={[styles.button, styles.exportButton, isRecording && styles.buttonDisabled]}
+          onPress={exportCsv}
+          disabled={isRecording}
+        >
           <Text style={styles.buttonText}>Export CSV</Text>
         </Pressable>
 
-        <Text style={styles.info}>Minták a memóriában: {samples.length}</Text>
+        <Text style={styles.info}>
+          Állapot: {isRecording ? 'felvétel folyamatban' : 'nincs aktív mérés'}
+        </Text>
+        <Text style={styles.info}>Minták a felvételben: {samples.length}</Text>
+        {recordingStartedAt && (
+          <Text style={styles.info}>
+            Felvétel kezdete: {new Date(recordingStartedAt).toLocaleString()}
+          </Text>
+        )}
+        {recordingStoppedAt && !isRecording && (
+          <Text style={styles.info}>
+            Felvétel vége: {new Date(recordingStoppedAt).toLocaleString()}
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -390,6 +450,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
+  },
+  recordButton: {
+    backgroundColor: '#b02a37',
+  },
+  stopButton: {
+    backgroundColor: '#6c757d',
   },
   exportButton: {
     backgroundColor: '#157347',
