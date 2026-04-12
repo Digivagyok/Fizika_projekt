@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Magnetometer } from 'expo-sensors';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import Svg, { Polyline } from 'react-native-svg';
 
@@ -114,7 +114,7 @@ export default function App() {
     tempSub.remove();
 
     if (tempSamples.length < 10) {
-      Alert.alert('Calibration failed', 'Not enough sensor data was captured.');
+      Alert.alert('Kalibráció sikertelen', 'Nem elég szenzor adat lett felvétel.');
       setIsCalibrating(false);
       return;
     }
@@ -126,56 +126,59 @@ export default function App() {
     });
 
     setIsCalibrating(false);
-    Alert.alert('Calibration complete', 'Move the phone in a figure-eight for best results.');
+    Alert.alert('Kalibráció befejezve', 'Mozgassa a telefont egy 8-as alakzatban a legjobb eredményért.');
   };
 
   const exportCsv = async () => {
     if (samples.length === 0) {
-      Alert.alert('No data', 'There are no samples to export yet.');
+      Alert.alert('Nincs adat', 'Nincs exportálható adat.');
+
       return;
     }
 
-    const header = 'timestamp_ms,x_uT,y_uT,z_uT,magnitude_uT';
-    const rows = samples.map((s) => `${s.t},${s.x.toFixed(4)},${s.y.toFixed(4)},${s.z.toFixed(4)},${s.m.toFixed(4)}`);
-    const csv = [header, ...rows].join('\n');
+    try {
+      const header = 'timestamp_ms,x_uT,y_uT,z_uT,magnitude_uT';
+      const rows = samples.map(
+        (s) =>
+          `${s.t},${s.x.toFixed(4)},${s.y.toFixed(4)},${s.z.toFixed(4)},${s.m.toFixed(4)}`
+      );
+      const csv = [header, ...rows].join('\n');
 
-    const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-    if (!baseDir) {
-      Alert.alert('Export error', 'No writable directory found on this device.');
-      return;
+      const file = new File(Paths.cache, `magnetometer_${Date.now()}.csv`);
+      file.create({ overwrite: true });
+      file.write(csv);
+
+      const uri = file.uri;
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'text/csv',
+          dialogTitle: 'Export magnetic field data',
+        });
+        return;
+      }
+
+      Alert.alert(
+        'CSV saved',
+        Platform.select({
+          web: 'Sharing is not available in web mode.',
+          default: `CSV file path: ${uri}`,
+        })
+      );
+    } catch (error) {
+      Alert.alert('Export error', error?.message || 'Failed to write CSV file.');
     }
-
-    const uri = `${baseDir}magnetometer_${Date.now()}.csv`;
-    await FileSystem.writeAsStringAsync(uri, csv, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
-
-    const canShare = await Sharing.isAvailableAsync();
-    if (canShare) {
-      await Sharing.shareAsync(uri, {
-        mimeType: 'text/csv',
-        dialogTitle: 'Export magnetic field data',
-      });
-      return;
-    }
-
-    Alert.alert(
-      'CSV saved',
-      Platform.select({
-        web: 'Sharing is not available in web mode.',
-        default: `CSV file path: ${uri}`,
-      })
-    );
   };
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Magnetic Field Meter</Text>
-        <Text style={styles.subtitle}>Values are shown in microtesla (uT)</Text>
+        <Text style={styles.title}>Mágneses térerősségmérő</Text>
+        <Text style={styles.subtitle}>Az értékek mikroteszlában vannak megadva (uT)</Text>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Live Sensor Values</Text>
+          <Text style={styles.cardTitle}>Szenzor adatok</Text>
           <Text style={styles.row}>X: {format(corrected.x)}</Text>
           <Text style={styles.row}>Y: {format(corrected.y)}</Text>
           <Text style={styles.row}>Z: {format(corrected.z)}</Text>
@@ -183,7 +186,7 @@ export default function App() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Live Magnitude Chart</Text>
+          <Text style={styles.cardTitle}>Mágneses indukció grafikon</Text>
           <Svg width="100%" height={180} viewBox="0 0 320 180">
             <Polyline
               points={toPoints(chartData, 320, 180)}
@@ -198,11 +201,11 @@ export default function App() {
 
         <View style={styles.buttonRow}>
           <Pressable style={styles.button} onPress={setCurrentAsZero}>
-            <Text style={styles.buttonText}>Set current as zero</Text>
+            <Text style={styles.buttonText}>Nullázás</Text>
           </Pressable>
 
           <Pressable style={[styles.button, isCalibrating && styles.buttonDisabled]} onPress={startCalibration} disabled={isCalibrating}>
-            <Text style={styles.buttonText}>{isCalibrating ? 'Calibrating...' : '8s calibration'}</Text>
+            <Text style={styles.buttonText}>{isCalibrating ? 'Kalibrálás...' : '8s kalibráció'}</Text>
           </Pressable>
         </View>
 
@@ -210,7 +213,7 @@ export default function App() {
           <Text style={styles.buttonText}>Export CSV</Text>
         </Pressable>
 
-        <Text style={styles.info}>Samples in memory: {samples.length}</Text>
+        <Text style={styles.info}>Minták a memóriában: {samples.length}</Text>
       </ScrollView>
     </SafeAreaView>
   );
