@@ -390,6 +390,9 @@ const stopRecording = () => {
             Felvétel vége: {new Date(recordingStoppedAt).toLocaleString()}
           </Text>
         )}
+        <Text style={styles.info}>
+          Készítők: Barátfalvi Péter, Bodor Dávid, Szabó Márton
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
